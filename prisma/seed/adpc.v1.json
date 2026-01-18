@@ -1,0 +1,23 @@
+{
+  "version": "v1",
+  "questions": [
+    {
+      "code": "Q001",
+      "dimension": "DOMINANCIA",
+      "text": "Em uma reunião de equipe, você prefere:",
+      "options": [
+        { "code": "A", "text": "Ir direto ao ponto e focar em resultados.", "weight": 3 },
+        { "code": "B", "text": "Ouvir todos antes de tomar uma decisão.", "weight": 1 }
+      ]
+    },
+    {
+      "code": "Q002",
+      "dimension": "INFLUENCIA",
+      "text": "Ao conhecer pessoas novas, você geralmente:",
+      "options": [
+        { "code": "A", "text": "Inicia a conversa e faz amizades rapidamente.", "weight": 3 },
+        { "code": "B", "text": "Observa primeiro e fala apenas o necessário.", "weight": 1 }
+      ]
+    }
+  ]
+}

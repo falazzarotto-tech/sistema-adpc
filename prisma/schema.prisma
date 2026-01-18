@@ -7,224 +7,55 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserRole {
-  admin
-  analyst
-  operator
-  auditor
+model AdpcQuestion {
+  id        String       @id @default(uuid())
+  code      String       @unique // Chave natural para o Seed
+  text      String
+  dimension String       // Ex: DOMINANCIA, INFLUENCIA, etc.
+  version   String       @default("v1")
+  options   AdpcOption[]
+  responses AdpcResponse[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 }
 
-enum AssessmentState {
-  CREATED
-  CONTEXT_SET
-  CONSENTED
-  IN_PROGRESS
-  READY_TO_SCORE
-  COMPLETED
-  ABANDONED
-}
+model AdpcOption {
+  id         String       @id @default(uuid())
+  questionId String
+  code       String       // Ex: A, B, C
+  text       String
+  weight     Int          @default(1)
+  question   AdpcQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
-enum EngineRunStatus {
-  QUEUED
-  PROCESSING
-  COMPLETED
-  NEEDS_REVIEW
-  FAILED_FINAL
-}
-
-enum AuditAction {
-  assessment_created
-  context_updated
-  consent_accepted
-  response_saved
-  assessment_complete_requested
-  scoring_completed
-  engine_run_created
-  report_viewed
-  report_exported_pdf
-  replay_viewed
-  admin_config_changed
+  @@unique([questionId, code]) // Garante que não existam duas opções "A" na mesma pergunta
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  role      UserRole
-  createdAt DateTime @default(now())
-
-  audits      AuditLog[]
-  assessments Assessment[]
-
-  @@map("users")
+  id        String         @id @default(uuid())
+  email     String         @unique
+  name      String
+  responses AdpcResponse[]
+  createdAt DateTime       @default(now())
 }
 
-model Subject {
-  id        String   @id @default(cuid())
-  name      String?
-  email     String?
-  createdAt DateTime @default(now())
-
-  assessments Assessment[]
-
-  @@map("subjects")
-}
-
-model Assessment {
-  id        String  @id @default(cuid())
-  subjectId String
-  subject   Subject @relation(fields: [subjectId], references: [id])
-
-  createdByUserId String?
-  createdByUser   User?   @relation(fields: [createdByUserId], references: [id])
-
-  questionnaireVersion String
-  engineVersion        String
-
-  state AssessmentState @default(CREATED)
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  completedAt DateTime?
-
-  meta Json?
-
-  context      AssessmentContext?
-  consent      AssessmentConsent?
-  responses    AssessmentResponse[]
-  flags        AssessmentFlags?
-  engineRuns   EngineRun[]
-  pdfArtifacts PdfArtifact[]
-  audits       AuditLog[]
-
-  @@index([subjectId])
-  @@index([createdByUserId])
-  @@index([state])
-  @@map("assessments")
-}
-
-model AssessmentContext {
-  id           String     @id @default(cuid())
-  assessmentId String     @unique
-  assessment   Assessment @relation(fields: [assessmentId], references: [id])
-
-  mainContext     String
-  roleDescription String?
-  pressureLevel   String?
-
-  objective String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("assessment_contexts")
-}
-
-model AssessmentConsent {
-  id           String     @id @default(cuid())
-  assessmentId String     @unique
-  assessment   Assessment @relation(fields: [assessmentId], references: [id])
-
-  termVersion String
-  termHash    String
-  acceptedAt  DateTime
-  ip          String?
-
-  createdAt DateTime @default(now())
-
-  @@map("assessment_consents")
-}
-
-model AssessmentResponse {
-  id           String     @id @default(cuid())
-  assessmentId String
-  assessment   Assessment @relation(fields: [assessmentId], references: [id])
-
-  questionCode String
-  likert       Int
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@unique([assessmentId, questionCode])
-  @@index([assessmentId])
-  @@map("assessment_responses")
-}
-
-model AssessmentFlags {
-  id           String     @id @default(cuid())
-  assessmentId String     @unique
-  assessment   Assessment @relation(fields: [assessmentId], references: [id])
-
-  attentionOk          Boolean @default(true)
-  selfPresentationRisk Boolean @default(false)
-  consistencyWarning   Boolean @default(false)
-
-  details Json?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("assessment_flags")
-}
-
-model EngineRun {
-  id           String     @id @default(cuid())
-  assessmentId String
-  assessment   Assessment @relation(fields: [assessmentId], references: [id])
-
-  engineVersion        String
-  questionnaireVersion String
-
-  status EngineRunStatus @default(QUEUED)
-
-  runHash   String
-  inputHash String?
-
-  scores       Json
-  bands        Json
-  flags        Json
-  reportData   Json
-  patternIds   Json?
-  configHashes Json?
-
-  createdAt   DateTime  @default(now())
-  completedAt DateTime?
-
-  @@unique([runHash])
-  @@index([assessmentId])
-  @@index([status])
-  @@map("engine_runs")
-}
-
-model PdfArtifact {
-  id           String     @id @default(cuid())
-  assessmentId String
-  assessment   Assessment @relation(fields: [assessmentId], references: [id])
-
-  runHash    String
-  storageKey String
-  createdAt  DateTime @default(now())
-
-  @@unique([runHash])
-  @@index([assessmentId])
-  @@map("pdf_artifacts")
+model AdpcResponse {
+  id         String       @id @default(uuid())
+  userId     String
+  questionId String
+  optionId   String
+  user       User         @relation(fields: [userId], references: [id])
+  question   AdpcQuestion @relation(fields: [questionId], references: [id])
+  createdAt  DateTime     @default(now())
 }
 
 model AuditLog {
-  id           String      @id @default(cuid())
-  assessmentId String?
-  assessment   Assessment? @relation(fields: [assessmentId], references: [id])
-
-  userId String?
-  user   User?   @relation(fields: [userId], references: [id])
-
-  action    AuditAction
-  ip        String?
-  userAgent String?
-  details   Json?
-
-  createdAt DateTime @default(now())
-
-  @@index([assessmentId])
-  @@index([userId])
-  @@index([action])
-  @@map("audit_logs")
+  id         String   @id @default(uuid())
+  ts         DateTime @default(now())
+  requestId  String
+  actorType  String   @default("api_key")
+  action     String
+  ip         String?
+  userAgent  String?
+  statusCode Int?
+  metadata   Json?
 }
