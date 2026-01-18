@@ -8,13 +8,10 @@ const app = fastify({ logger: true });
 // --- MIDDLEWARE: API KEY & AUDITORIA ---
 
 app.addHook('onRequest', async (request, reply) => {
-  // 1. Gerar Request ID único para rastreamento
   request.headers['x-request-id'] = uuidv4();
 
-  // 2. Pular validação de API Key na rota raiz (Healthcheck)
   if (request.url === '/') return;
 
-  // 3. Validar API Key
   const apiKey = request.headers['x-api-key'];
   const validKey = process.env.API_KEY;
 
@@ -23,9 +20,8 @@ app.addHook('onRequest', async (request, reply) => {
   }
 });
 
-// Hook para gravar o Log de Auditoria após a resposta ser enviada
 app.addHook('onResponse', async (request, reply) => {
-  if (request.url === '/') return; // Não logar healthchecks simples
+  if (request.url === '/') return;
 
   try {
     await prisma.auditLog.create({
@@ -36,14 +32,14 @@ app.addHook('onResponse', async (request, reply) => {
         userAgent: request.headers['user-agent'],
         statusCode: reply.statusCode,
         metadata: {
-          body: request.body,
-          params: request.params,
-          query: request.query
+          body: request.body as any,
+          params: request.params as any,
+          query: request.query as any
         }
       }
     });
   } catch (err) {
-    app.log.error('Erro ao gravar log de auditoria:', err);
+    app.log.error(err as Error, 'Erro ao gravar log de auditoria');
   }
 });
 
@@ -57,7 +53,6 @@ app.get('/', async () => {
   };
 });
 
-// Exemplo de rota protegida (Cadastro de Usuário)
 app.post('/api/users', async (request, reply) => {
   const { email, name } = request.body as { email: string, name: string };
   
@@ -78,7 +73,7 @@ const start = async () => {
     await app.listen({ port, host });
     console.log(`🚀 Servidor ADPC Protegido rodando na porta ${port}`);
   } catch (err) {
-    app.log.error(err);
+    app.log.error(err as Error);
     process.exit(1);
   }
 };
