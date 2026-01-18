@@ -1,25 +1,29 @@
 import fastify from 'fastify';
-import { v4 as uuidv4 } from 'uuid';
+import { z } from 'zod';
 
 const app = fastify({
-  logger: false
+  logger: true
 });
 
-app.addHook('onRequest', async (request, reply) => {
-  const requestId = (request.headers['x-request-id'] as string) || uuidv4();
-  request.headers['x-request-id'] = requestId;
+// Rota de teste para o Live Run
+app.get('/', async () => {
+  return { status: 'Sistema ADPC Online', timestamp: new Date().toISOString() };
 });
 
-app.get('/health', async (request, reply) => {
-  return {
-    ok: true,
-    data: { status: "ok" },
-    meta: {
-      request_id: request.headers['x-request-id'],
-      timestamp: new Date().toISOString(),
-      version: "1.0.0-adpc"
-    }
-  };
-});
+// Lógica de inicialização (Crucial para o Railway)
+const start = async () => {
+  try {
+    const port = process.env.PORT ? parseInt(process.env.PORT) : 8080;
+    const host = '0.0.0.0'; // Necessário para acesso externo no Railway
 
-export { app };
+    await app.listen({ port, host });
+    console.log(`🚀 Servidor ADPC rodando na porta ${port}`);
+  } catch (err) {
+    app.log.error(err);
+    process.exit(1);
+  }
+};
+
+start();
+
+export default app;
