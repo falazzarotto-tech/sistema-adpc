@@ -29,7 +29,7 @@ app.addHook('onResponse', async (request, reply) => {
         requestId: String(request.headers['x-request-id']),
         action: `${request.method} ${request.url}`,
         ip: request.ip,
-        userAgent: request.headers['user-agent'],
+        userAgent: request.headers['user-agent'] ?? null,
         statusCode: reply.statusCode,
         metadata: {
           body: request.body as any,
