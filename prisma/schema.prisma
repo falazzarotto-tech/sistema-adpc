@@ -9,9 +9,9 @@ datasource db {
 
 model AdpcQuestion {
   id        String       @id @default(uuid())
-  code      String       @unique // Chave natural para o Seed
+  code      String       @unique
   text      String
-  dimension String       // Ex: DOMINANCIA, INFLUENCIA, etc.
+  dimension String       
   version   String       @default("v1")
   options   AdpcOption[]
   responses AdpcResponse[]
@@ -22,30 +22,55 @@ model AdpcQuestion {
 model AdpcOption {
   id         String       @id @default(uuid())
   questionId String
-  code       String       // Ex: A, B, C
+  code       String       
   text       String
   weight     Int          @default(1)
   question   AdpcQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  responses  AdpcResponse[]
 
-  @@unique([questionId, code]) // Garante que não existam duas opções "A" na mesma pergunta
+  @@unique([questionId, code])
 }
 
 model User {
-  id        String         @id @default(uuid())
-  email     String         @unique
-  name      String
-  responses AdpcResponse[]
-  createdAt DateTime       @default(now())
+  id          String           @id @default(uuid())
+  email       String           @unique
+  name        String
+  submissions AdpcSubmission[]
+  createdAt   DateTime         @default(now())
+}
+
+model AdpcSubmission {
+  id          String         @id @default(uuid())
+  userId      String
+  version     String         @default("v1")
+  status      String         @default("PENDING") // PENDING, PROCESSED, FAILED
+  user        User           @relation(fields: [userId], references: [id])
+  responses   AdpcResponse[]
+  result      AdpcResult?
+  metadata    Json?          // IP, UserAgent, etc.
+  createdAt   DateTime       @default(now())
+  processedAt DateTime?
 }
 
 model AdpcResponse {
-  id         String       @id @default(uuid())
-  userId     String
-  questionId String
-  optionId   String
-  user       User         @relation(fields: [userId], references: [id])
-  question   AdpcQuestion @relation(fields: [questionId], references: [id])
-  createdAt  DateTime     @default(now())
+  id           String         @id @default(uuid())
+  submissionId String
+  questionId   String
+  optionId     String
+  submission   AdpcSubmission @relation(fields: [submissionId], references: [id])
+  question     AdpcQuestion   @relation(fields: [questionId], references: [id])
+  option       AdpcOption     @relation(fields: [optionId], references: [id])
+  createdAt    DateTime       @default(now())
+}
+
+model AdpcResult {
+  id             String         @id @default(uuid())
+  submissionId   String         @unique
+  submission     AdpcSubmission @relation(fields: [submissionId], references: [id])
+  scores         Json           // { "DOMINANCIA": 80, ... }
+  primaryProfile String
+  pdfUrl         String?
+  createdAt      DateTime       @default(now())
 }
 
 model AuditLog {
