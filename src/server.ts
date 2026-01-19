@@ -23,7 +23,7 @@ app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) =
       }
     });
   } catch (err) {
-    request.log.warn('Audit log failed', err as Error);
+    request.log.warn({ err }, 'Audit log failed');
   }
 });
 
@@ -85,7 +85,7 @@ app.post('/api/submissions', async (request: FastifyRequest, reply: FastifyReply
       });
       const scores: Record<string, number> = {};
       ['DOMINANCIA', 'INFLUENCIA', 'ESTABILIDADE', 'CONFORMIDADE'].forEach(d => {
-        scores[d] = chosen[d] ? Math.min(chosen[d]  10, 100) : 50;
+        scores[d] = chosen[d] ? Math.min(chosen[d] * 10, 100) : 50;
       });
       const adpcResult = await tx.adpcResult.create({
         data: {
