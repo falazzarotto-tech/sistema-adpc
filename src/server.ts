@@ -92,7 +92,6 @@ app.post('/api/submissions', async (request: FastifyRequest, reply: FastifyReply
           submissionId: submission.id,
           scores: scores as any,
           primaryProfile: Object.keys(scores).sort((a, b) => scores[b] - scores[a])[0],
-          explanations: scores as any
         }
       });
       return { submissionId: submission.id, result: adpcResult };
@@ -115,7 +114,7 @@ app.get('/api/results/:submissionId', async (request: FastifyRequest, reply: Fas
 
 const start = async () => {
   try {
-    const port = Number(process.env.PORT || 3000);
+    const port = Number(process.env.PORT || 8080);
     const host = '0.0.0.0';
     await app.listen({ port, host });
     console.log(`Servidor rodando em http://${host}:${port}`);
