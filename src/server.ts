@@ -10,12 +10,9 @@ const API_KEY = process.env.API_KEY || 'adpc_master_key_2026';
 // Middleware de Segurança e Auditoria
 app.addHook('preHandler', async (request, reply) => {
   const apiKey = request.headers['x-api-key'];
-  
   if (apiKey !== API_KEY) {
     return reply.code(401).send({ error: 'Unauthorized' });
   }
-
-  // Auditoria básica
   await prisma.auditLog.create({
     data: {
       requestId: uuidv4(),
@@ -30,12 +27,11 @@ app.addHook('preHandler', async (request, reply) => {
 // Rota: Criar Usuário
 app.post('/api/users', async (request, reply) => {
   const { email, name } = request.body as { email: string; name: string };
-  const user = await prisma.user.upsert({
+  return await prisma.user.upsert({
     where: { email },
     update: { name },
     create: { email, name }
   });
-  return user;
 });
 
 // Rota: Listar Perguntas ADPC
@@ -57,7 +53,6 @@ app.get('/api/questions', async (request, reply) => {
 // Rota: Enviar Respostas (Submissão)
 app.post('/api/submissions', async (request, reply) => {
   const body = request.body as any;
-  
   try {
     const result = await prisma.$transaction(async (tx) => {
       const submission = await tx.adpcSubmission.create({
@@ -73,8 +68,6 @@ app.post('/api/submissions', async (request, reply) => {
           }
         }
       });
-
-      // Cálculo simplificado para teste (Engine completa será refinada no próximo passo)
       const adpcResult = await tx.adpcResult.create({
         data: {
           submissionId: submission.id,
@@ -82,7 +75,6 @@ app.post('/api/submissions', async (request, reply) => {
           primaryProfile: 'EQUILIBRADO'
         }
       });
-
       return { submissionId: submission.id, result: adpcResult };
     });
     return result;
