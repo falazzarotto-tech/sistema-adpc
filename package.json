@@ -8,7 +8,7 @@
     "dev": "tsx watch src/server.ts",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "build": "tsc -p tsconfig.build.json",
-    "start": "npx prisma generate && npx prisma db push && npx tsx src/server.ts",
+    "start": "node dist/server.js",
     "postinstall": "prisma generate",
     "start:server": "node dist/server.js"
   },
