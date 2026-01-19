@@ -1,5 +1,5 @@
-import Fastify from 'fastify';
-import { PrismaClient } from '@prisma/client';
+import Fastify, { FastifyRequest, FastifyReply } from 'fastify';
+import { PrismaClient, AdpcQuestion, AdpcOption, User } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
@@ -7,75 +7,75 @@ const app = Fastify({ logger: true });
 
 const API_KEY = process.env.API_KEY || 'adpc_master_key_2026';
 
-// Audit hook + API key check
-app.addHook('preHandler', async (request, reply) => {
+interface SubmissionResponse {
+  questionId: string;
+  optionId: string;
+}
+
+app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
   const apiKey = request.headers['x-api-key'];
   if (apiKey !== API_KEY) {
     return reply.code(401).send({ error: 'Unauthorized' });
   }
 
-  // Attempt to create an audit log, but don't block on failure
   try {
     await prisma.auditLog.create({
       data: {
         requestId: uuidv4(),
         action: `${request.method} ${request.url}`,
         ip: request.ip,
-        userAgent: request.headers['user-agent'],
-        metadata: (request.body as any) || {}
+        userAgent: (request.headers['user-agent'] as string) || '',
+        metadata: request.body ?? {}
       }
     });
   } catch (err) {
-    request.log?.warn?.('Audit log failed', err);
+    request.log.warn('Audit log failed', err as Error);
   }
 });
 
-// Create / upsert user
-app.post('/api/users', async (request, reply) => {
-  const { email, name } = request.body as { email: string; name?: string };
-  if (!email) return reply.code(422).send({ error: 'email required' });
+app.post('/api/users', async (request: FastifyRequest, reply: FastifyReply) => {
+  const body = request.body as { email?: string; name?: string };
+  if (!body.email) return reply.code(422).send({ error: 'email required' });
 
   const user = await prisma.user.upsert({
-    where: { email },
-    update: { name },
-    create: { email, name }
+    where: { email: body.email },
+    update: { name: body.name ?? '' },
+    create: { email: body.email, name: body.name ?? '' }
   });
   return reply.send(user);
 });
 
-// List questions
-app.get('/api/questions', async (request, reply) => {
-  const version = (request.query as any)?.version ?? 'v1';
+app.get('/api/questions', async (request: FastifyRequest, reply: FastifyReply) => {
+  const query = request.query as { version?: string };
+  const version = query.version ?? 'v1';
+
   const questions = await prisma.adpcQuestion.findMany({
     where: { version },
     orderBy: { code: 'asc' },
     include: {
       options: {
         orderBy: { code: 'asc' },
-        select: { id: true, code: true, text: true } // do not leak weights
+        select: { id: true, code: true, text: true }
       }
     }
   });
+
   return reply.send({ version, questions });
 });
 
-// Submit responses (with validations)
-app.post('/api/submissions', async (request, reply) => {
-  const body = request.body as any;
-  if (!body || !Array.isArray(body.responses) || body.responses.length === 0) {
+app.post('/api/submissions', async (request: FastifyRequest, reply: FastifyReply) => {
+  const body = request.body as { userId?: string; version?: string; responses?: SubmissionResponse[] };
+  if (!body.responses || !Array.isArray(body.responses) || body.responses.length === 0) {
     return reply.code(422).send({ error: 'responses must be a non-empty array' });
   }
-  const userId = body.userId;
-  if (!userId) return reply.code(422).send({ error: 'userId is required' });
+  if (!body.userId) return reply.code(422).send({ error: 'userId is required' });
 
-  // Basic shape validation
-  const responses = body.responses.map((r: any) => ({
+  const responses = body.responses.map((r: SubmissionResponse) => ({
     questionId: String(r.questionId),
     optionId: String(r.optionId)
   }));
 
-  // 1) Duplicate questionId?
-  const qIds = responses.map(r => r.questionId);
+  const qIds = responses.map((r: SubmissionResponse) => r.questionId);
   const uniqueQ = new Set(qIds);
   if (uniqueQ.size !== qIds.length) {
     return reply.code(422).send({ error: 'Duplicate questionId in responses' });
@@ -83,32 +83,28 @@ app.post('/api/submissions', async (request, reply) => {
 
   try {
     const resultPayload = await prisma.$transaction(async (tx) => {
-      // Load questions with their options (weights present but not exposed to client)
       const questions = await tx.adpcQuestion.findMany({
         where: { id: { in: qIds } },
         include: { options: true }
       });
 
-      // 2) All questionIds exist?
-      const foundQIds = new Set(questions.map(q => q.id));
-      const missing = qIds.filter(id => !foundQIds.has(id));
+      const foundQIds = new Set(questions.map((q: AdpcQuestion) => q.id));
+      const missing = qIds.filter((id: string) => !foundQIds.has(id));
       if (missing.length > 0) {
         throw { status: 422, message: `Question(s) not found: ${missing.join(',')}` };
       }
 
-      // Build map optionId -> questionId and option meta (weight, dimension)
       const optionToQuestion: Record<string, { questionId: string; weight: number; dimension: string }> = {};
       for (const q of questions) {
-        for (const opt of q.options) {
-          optionToQuestion[(opt as any).id] = {
+        for (const opt of q.options as AdpcOption[]) {
+          optionToQuestion[opt.id] = {
             questionId: q.id,
-            weight: Number((opt as any).weight ?? 0),
-            dimension: String((opt as any).dimension ?? q.dimension ?? 'UNKNOWN')
+            weight: opt.weight ?? 0,
+            dimension: opt.dimension ?? q.dimension ?? 'UNKNOWN'
           };
         }
       }
 
-      // 3) Validate each option belongs to the given question
       for (const r of responses) {
         const meta = optionToQuestion[r.optionId];
         if (!meta) {
@@ -119,11 +115,10 @@ app.post('/api/submissions', async (request, reply) => {
         }
       }
 
-      // Create submission + responses
       const submission = await tx.adpcSubmission.create({
         data: {
-          userId,
-          version: body.version || 'v1',
+          userId: body.userId!,
+          version: body.version ?? 'v1',
           status: 'PROCESSED',
           responses: {
             create: responses.map(r => ({
@@ -134,18 +129,15 @@ app.post('/api/submissions', async (request, reply) => {
         }
       });
 
-      // Scoring: normalize per-dimension using question options weights
       const minPossible: Record<string, number> = {};
       const maxPossible: Record<string, number> = {};
-      // compute mins/maxs from all questions used (use questions array)
       for (const q of questions) {
-        const weights = (q.options as any[]).map(o => Number(o.weight ?? 0));
-        const dim = String(q.dimension ?? 'UNKNOWN');
+        const weights = (q.options as AdpcOption[]).map(o => o.weight ?? 0);
+        const dim = q.dimension ?? 'UNKNOWN';
         minPossible[dim] = (minPossible[dim] ?? 0) + Math.min(...weights);
         maxPossible[dim] = (maxPossible[dim] ?? 0) + Math.max(...weights);
       }
 
-      // sum chosen weights per dimension
       const chosen: Record<string, number> = {};
       for (const r of responses) {
         const meta = optionToQuestion[r.optionId];
@@ -160,7 +152,7 @@ app.post('/api/submissions', async (request, reply) => {
         const min = minPossible[dim] ?? 0;
         const max = maxPossible[dim] ?? 0;
         const denom = max - min;
-        scores[dim] = denom > 0 ? Math.round(((ch - min) / denom) * 100) : 0;
+        scores[dim] = denom > 0 ? Math.round(((ch - min) / denom)  100) : 0;
       }
 
       const primaryProfile = Object.keys(scores).sort((a, b) => scores[b] - scores[a])[0] ?? 'EQUILIBRADO';
@@ -183,14 +175,13 @@ app.post('/api/submissions', async (request, reply) => {
     if (err && err.status && err.message) {
       return reply.code(err.status).send({ error: err.message });
     }
-    request.log?.error?.('submission failed', err);
+    request.log.error('submission failed', err);
     return reply.code(500).send({ error: 'Failed to process submission', details: err?.message ?? String(err) });
   }
 });
 
-// Get result by submissionId (persistence check)
-app.get('/api/results/:submissionId', async (request, reply) => {
-  const { submissionId } = request.params as any;
+app.get('/api/results/:submissionId', async (request: FastifyRequest, reply: FastifyReply) => {
+  const { submissionId } = request.params as { submissionId: string };
   if (!submissionId) return reply.code(422).send({ error: 'submissionId required' });
 
   const result = await prisma.adpcResult.findUnique({
