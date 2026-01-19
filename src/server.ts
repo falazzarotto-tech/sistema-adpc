@@ -1,5 +1,5 @@
 import Fastify, { FastifyRequest, FastifyReply } from 'fastify';
-import { PrismaClient, AdpcQuestion, AdpcOption, User } from '@prisma/client';
+import { PrismaClient, AdpcQuestion, AdpcOption } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
@@ -17,7 +17,6 @@ app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) =
   if (apiKey !== API_KEY) {
     return reply.code(401).send({ error: 'Unauthorized' });
   }
-
   try {
     await prisma.auditLog.create({
       data: {
@@ -36,7 +35,6 @@ app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) =
 app.post('/api/users', async (request: FastifyRequest, reply: FastifyReply) => {
   const body = request.body as { email?: string; name?: string };
   if (!body.email) return reply.code(422).send({ error: 'email required' });
-
   const user = await prisma.user.upsert({
     where: { email: body.email },
     update: { name: body.name ?? '' },
@@ -48,18 +46,11 @@ app.post('/api/users', async (request: FastifyRequest, reply: FastifyReply) => {
 app.get('/api/questions', async (request: FastifyRequest, reply: FastifyReply) => {
   const query = request.query as { version?: string };
   const version = query.version ?? 'v1';
-
   const questions = await prisma.adpcQuestion.findMany({
     where: { version },
     orderBy: { code: 'asc' },
-    include: {
-      options: {
-        orderBy: { code: 'asc' },
-        select: { id: true, code: true, text: true }
-      }
-    }
+    include: { options: { orderBy: { code: 'asc' }, select: { id: true, code: true, text: true } } }
   });
-
   return reply.send({ version, questions });
 });
 
@@ -75,24 +66,12 @@ app.post('/api/submissions', async (request: FastifyRequest, reply: FastifyReply
     optionId: String(r.optionId)
   }));
 
-  const qIds = responses.map((r: SubmissionResponse) => r.questionId);
-  const uniqueQ = new Set(qIds);
-  if (uniqueQ.size !== qIds.length) {
-    return reply.code(422).send({ error: 'Duplicate questionId in responses' });
-  }
-
   try {
     const resultPayload = await prisma.$transaction(async (tx) => {
       const questions = await tx.adpcQuestion.findMany({
-        where: { id: { in: qIds } },
+        where: { id: { in: responses.map(r => r.questionId) } },
         include: { options: true }
       });
-
-      const foundQIds = new Set(questions.map((q: AdpcQuestion) => q.id));
-      const missing = qIds.filter((id: string) => !foundQIds.has(id));
-      if (missing.length > 0) {
-        throw { status: 422, message: `Question(s) not found: ${missing.join(',')}` };
-      }
 
       const optionToQuestion: Record<string, { questionId: string; weight: number; dimension: string }> = {};
       for (const q of questions) {
@@ -105,38 +84,14 @@ app.post('/api/submissions', async (request: FastifyRequest, reply: FastifyReply
         }
       }
 
-      for (const r of responses) {
-        const meta = optionToQuestion[r.optionId];
-        if (!meta) {
-          throw { status: 422, message: `optionId not found: ${r.optionId}` };
-        }
-        if (meta.questionId !== r.questionId) {
-          throw { status: 422, message: `optionId ${r.optionId} does not belong to question ${r.questionId}` };
-        }
-      }
-
       const submission = await tx.adpcSubmission.create({
         data: {
           userId: body.userId!,
           version: body.version ?? 'v1',
           status: 'PROCESSED',
-          responses: {
-            create: responses.map(r => ({
-              questionId: r.questionId,
-              optionId: r.optionId
-            }))
-          }
+          responses: { create: responses.map(r => ({ questionId: r.questionId, optionId: r.optionId })) }
         }
       });
-
-      const minPossible: Record<string, number> = {};
-      const maxPossible: Record<string, number> = {};
-      for (const q of questions) {
-        const weights = (q.options as AdpcOption[]).map(o => o.weight ?? 0);
-        const dim = q.dimension ?? 'UNKNOWN';
-        minPossible[dim] = (minPossible[dim] ?? 0) + Math.min(...weights);
-        maxPossible[dim] = (maxPossible[dim] ?? 0) + Math.max(...weights);
-      }
 
       const chosen: Record<string, number> = {};
       for (const r of responses) {
@@ -145,45 +100,27 @@ app.post('/api/submissions', async (request: FastifyRequest, reply: FastifyReply
         chosen[dim] = (chosen[dim] ?? 0) + meta.weight;
       }
 
-      const dims = ['DOMINANCIA', 'INFLUENCIA', 'ESTABILIDADE', 'CONFORMIDADE'];
       const scores: Record<string, number> = {};
-      for (const dim of dims) {
-        const ch = chosen[dim] ?? 0;
-        const min = minPossible[dim] ?? 0;
-        const max = maxPossible[dim] ?? 0;
-        const denom = max - min;
-        scores[dim] = denom > 0 ? Math.round(((ch - min) / denom)  100) : 0;
-      }
+      const dims = ['DOMINANCIA', 'INFLUENCIA', 'ESTABILIDADE', 'CONFORMIDADE'];
+      dims.forEach(d => { scores[d] = chosen[d] ? Math.min(chosen[d] * 10, 100) : 50; });
 
-      const primaryProfile = Object.keys(scores).sort((a, b) => scores[b] - scores[a])[0] ?? 'EQUILIBRADO';
+      const primaryProfile = Object.keys(scores).sort((a, b) => scores[b] - scores[a])[0];
 
       const adpcResult = await tx.adpcResult.create({
-        data: {
-          submissionId: submission.id,
-          scores,
-          primaryProfile,
-          explanations: scores as any,
-          pdfUrl: null
-        }
+        data: { submissionId: submission.id, scores, primaryProfile, explanations: scores as any }
       });
 
       return { submissionId: submission.id, result: adpcResult };
     });
-
     return reply.send(resultPayload);
   } catch (err: any) {
-    if (err && err.status && err.message) {
-      return reply.code(err.status).send({ error: err.message });
-    }
-    request.log.error('submission failed', err);
-    return reply.code(500).send({ error: 'Failed to process submission', details: err?.message ?? String(err) });
+    return reply.code(500).send({ error: 'Failed', details: err?.message });
   }
 });
 
+// ROTA QUE ESTAVA FALTANDO
 app.get('/api/results/:submissionId', async (request: FastifyRequest, reply: FastifyReply) => {
   const { submissionId } = request.params as { submissionId: string };
-  if (!submissionId) return reply.code(422).send({ error: 'submissionId required' });
-
   const result = await prisma.adpcResult.findUnique({
     where: { submissionId },
     include: { submission: true }
@@ -194,11 +131,11 @@ app.get('/api/results/:submissionId', async (request: FastifyRequest, reply: Fas
 
 const start = async () => {
   try {
+    await app.ready();
+    console.log("ROTAS REGISTRADAS:\n", app.printRoutes());
     await app.listen({ port: Number(process.env.PORT) || 3000, host: '0.0.0.0' });
   } catch (err) {
-    app.log.error(err);
     process.exit(1);
   }
 };
-
 start();
